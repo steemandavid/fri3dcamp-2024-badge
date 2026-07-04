@@ -1,0 +1,16 @@
+# Huge: local clones of the upstream Fri3dCamp repos (not our code)
+repos/
+
+# Personal full-flash backup (contains my ROMs/saves/wifi config) — do NOT publish
+backups/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Claude Code local settings / memory
+.claude/

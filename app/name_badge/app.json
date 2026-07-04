@@ -1,0 +1,10 @@
+{
+  "name": "DAVID",
+  "cls": "NameBadge",
+  "hidden": false,
+  "config": {
+    "first": "DAVID",
+    "last": "STEEMAN",
+    "callsign": "ON4BDS"
+  }
+}
