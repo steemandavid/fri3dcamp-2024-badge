@@ -392,3 +392,30 @@ Project-side mirror: `app/{main.py, neon_launcher/, name_badge/}`. Deploy/run to
 - Badge currently **boots into the NeonLauncher**; press **A** on DAVID to play.
 - **Confirmed working by the user (2026-07-04):** the animation plays and the controls
   behave as intended. Neon name-badge app is complete and live on the badge.
+
+---
+
+# Published the code + wrote a companion blog post — 2026-07-04 (cont.)
+
+## 1. GitHub repo
+Published the project to **[steemandavid/fri3dcamp-2024-badge](https://github.com/steemandavid/fri3dcamp-2024-badge)**
+(public). `git init` in the project dir with a `.gitignore` that excludes the 1.7 GB
+`repos/` (upstream clones) and `backups/` (personal full-flash dump with ROMs/wifi).
+Committed `app/`, `tools/`, `hardware_test.py`, `BADGE.md`, `pinout.md`,
+`name_badge_design.md`, `changelog.md`, `Pictures/` + a new `README.md` (links the blog
+post + the official Fri3dCamp repos). Pushed via `gh` (SSH, account `steemandavid`).
+
+## 2. Blog post (steeman.be)
+Wrote a general guide — *"Programming the Fri3d Camp 2024 Badge with Claude Code"* — at
+`content/posts/programming-the-fri3d-badge-with-claude-code.md` (categories: Electronics,
+ESP32, AI, DIY). Links **both** the official Fri3dCamp repos and the new app repo.
+- Copied 2 board photos to `static/images/Fri3dBadge/`, resized with PIL (2.1 MB→212 KB,
+  1.4 MB→110 KB). Hero = front; back silkscreen shot inline in the body.
+- Published: `hugo --gc --minify` + `./scripts/deploy.sh --verify` (incremental FTP).
+  Live: <https://www.steeman.be/posts/programming-the-fri3d-badge-with-claude-code/>.
+
+## 3. Image-caption fix
+First deploy had the two photos' captions swapped (I'd guessed wrong which source photo
+was front vs back when copying). The markdown was internally consistent (filename matched
+caption), so the fix was to **swap the two image files** (`badge-front.jpg` ↔
+`badge-back.jpg`) — direction-agnostic, restores front-first ordering. Rebuilt + redeployed.
