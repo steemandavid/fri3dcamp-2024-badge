@@ -419,3 +419,62 @@ First deploy had the two photos' captions swapped (I'd guessed wrong which sourc
 was front vs back when copying). The markdown was internally consistent (filename matched
 caption), so the fix was to **swap the two image files** (`badge-front.jpg` ↔
 `badge-back.jpg`) — direction-agnostic, restores front-first ordering. Rebuilt + redeployed.
+
+---
+
+# Flashed the badge with ESPHome + integrated into Home Assistant — 2026-07-05
+
+Turned the badge into a **Home Assistant** device by writing a full ESPHome 2026.6.2 firmware
+config (`esphome/fri3d-badge.yaml`), flashing it over USB, and bringing up every peripheral —
+including the GC9307 display (v2). The camp firmware is restored from the verified 16 MiB backup,
+so the whole thing is reversible. Wi-Fi creds were recovered from an existing local ESP build
+(`~/esp221-build/secrets.yaml`) — the badge's own Retro-Go `wifi.json` only held defaults.
+
+## System / device state
+- **Firmware now on the badge:** ESPHome 2026.6.2 (was: Fri3d NeonLauncher / Retro-Go). Board
+  `esp32-s3-devkitc-1`, Arduino framework, 16 MB flash. App partition `0x10000`.
+- **Network:** joins SSID **`politiezone-0526`** (FRITZ!Box mesh), gets ~`192.168.1.194`,
+  hostname `fri3d-badge`. API `fri3d-badge.local:6053` (Noise encryption), OTA `:3232`.
+- **HA:** FRITZ!Box integration shows `device_tracker.fri3d_badge`; ESPHome integration added by
+  the user with the API key → ~20 live entities.
+
+## 1. v1 — config, compile, flash, verify
+- Wrote `esphome/fri3d-badge.yaml` + gitignored `esphome/secrets.yaml` (ESPHome auto-created
+  `esphome/.gitignore` to exclude secrets + `.esphome/` build dir). Generated a fresh API key.
+- Compiled, then `esphome upload … --device /dev/ttyACM0` (writes bootloader @0x0, partitions
+  @0x8000, `boot_app0` @0x9000, app @0x10000). Verified boot + Wi-Fi join + API up via serial,
+  and reachability (ping, ports 6053/3232, mDNS).
+
+## 2. Driver gotchas discovered (all fixed in-config)
+| Subsystem | Problem | Fix |
+|---|---|---|
+| **IMU** (WSEN-ISDS) | No `lsm6ds3` component; `lsm6ds:` isn't a YAML domain | Unified `motion` platform: `motion: - platform: lsm6ds` + `sensor: - platform: motion`. Chip = ST LSM6DS3 (WHO_AM_I `0x6A`) @ I²C `0x6B` |
+| **NeoPixels** | `neopixelbus` pulls in legacy RMT → clashes with `remote_receiver`'s new RMT (`rmt_channel_t` redefined) → compile fail | `light: esp32_rmt_led_strip` (chipset WS2812, GRB, use_psram:false) + `addressable_rainbow`/`pulse`/`strobe` effects |
+| **SPI keys** | `mosi`/`clk`/`miso` rejected | This version uses `mosi_pin`/`clk_pin`/`miso_pin` |
+| **Battery** | GPIO13 is **ADC2_CH2** (pinout.md's "ADC1_CH12" is wrong) | Verified ADC2 reads fine on the S3 with Wi-Fi up; divider 2.0, 3.15–4.15 V = 0–100 % (template sensors for V + %) |
+| **Display** | `st7789v` deprecated + fixed-model; its 240×320 native makes 296-wide fail "invalid offsets" | `mipi_spi` CUSTOM model — see §3 |
+
+Confirmed live in HA: accel Z = −0.976 g (flat), gyro ~0, IMU temp 22.5 °C, joystick 1.3/1.7 V,
+battery 3.92 V / 77 %, 6 buttons, NeoPixel light with effects.
+
+## 3. v2 — GC9307 display bring-up (the hard part)
+Iterated against photos the user dropped in `/storage/fileshare/`. The init/orientation was wrong
+until I mined the **ground truth** from the running firmware:
+- Source: `repos/badge_retro-go/components/retro-go/targets/fri3d-2024/config.h` — exact MADCTL,
+  dimensions, SPI speed and init for this panel.
+- Winning config: `mipi_spi`, `model: CUSTOM`, `dimensions: 296×240`,
+  `transform: {swap_xy: true, mirror_x/y: false}` → **MADCTL 0x28** (MV|BGR), `data_rate: 40MHz`,
+  `color_order: BGR`, `invert_colors: false`, ILI9341-style `init_sequence` (0xCF/0xED/0xE8/0xCB/
+  0xF7/0xEA/0xC0/0xC1/0xC5/0xC7/0xB1/0xB6/0xF6/0xF2/0xE0/0xE1; ESPHome auto-adds SLPOUT/COLMOD/
+  MADCTL/INVOFF/DISPON). User confirmed: text right-side-up, correct fill.
+- SPI 80 MHz caused a 3.4 s main-loop stall on the first draw; dropping to **40 MHz** (Retro-Go's
+  speed) cut it to 70 ms.
+
+## Notes / gotchas
+- **Wi-Fi:** first connection attempt auth-fails vs the strongest mesh BSSID then succeeds on
+  retry every boot (~5 s, PMF quirk, self-heals).
+- **Serial log quirk:** on this S3's USB-Serial/JTAG, log output stops after Wi-Fi connects (the
+  full ~205-line boot dump prints, then silence). Read live sensor values from HA, not serial.
+- **Restore camp firmware:** `esptool --port /dev/ttyACM0 write_flash 0x0 backups/fri3d-badge-2024_full-flash_2026-07-02.bin`
+- **Docs updated:** `README.md` (ESPHome how-to + table row), `BADGE.md` §11 (driver notes),
+  memory `fri3d-badge-esphome.md` (deep detail).

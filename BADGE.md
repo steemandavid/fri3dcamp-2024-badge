@@ -385,3 +385,48 @@ programmable, and expandable with add-ons). The official ones:
 - **Official docs:** <https://fri3dcamp.github.io/badge_2024/en/> (start here for anything not covered).
 - **Suggested first task:** load a Game Boy ROM via the Retro-Go Wi-Fi hotspot (§6.1), or boot
   MicroPython and run the LED-blink example (§6.2) — both are non-destructive and reversible.
+
+---
+
+## 11. ESPHome / Home Assistant firmware
+
+`esphome/fri3d-badge.yaml` is a full alternative firmware (ESPHome 2026.6) that
+replaces the camp image and exposes the badge to Home Assistant over Wi-Fi. Flash
+with `esphome upload esphome/fri3d-badge.yaml --device /dev/ttyACM0` (put keys in
+the gitignored `esphome/secrets.yaml` first). Restore the camp firmware with the
+verified backup (§5.2). User-facing how-to is in the repo `README.md`.
+
+Hardware/driver notes behind the config (all verified on this badge):
+
+- **SoC:** `esp32-s3-devkitc-1`, Arduino framework, 16 MB flash; logger on
+  `USB_SERIAL_JTAG` (115200) so boot logs appear on `/dev/ttyACM0`.
+- **IMU (WSEN-ISDS):** Würth rebrand of ST **LSM6DS3** silicon (WHO_AM_I `0x6A`,
+  read at I²C **0x6B**). Driven by ESPHome's unified `lsm6ds` *motion-platform*
+  driver — there is no `lsm6ds3`/`lsm6dsox` component, and `lsm6ds:` is **not** a
+  top-level YAML domain. Correct form:
+  `motion: - platform: lsm6ds` + `sensor: - platform: motion` entries
+  (`acceleration_x/y/z`, `gyroscope_x/y/z`); temperature via
+  `sensor: - platform: lsm6ds, type: temperature`.
+- **NeoPixels (5× WS2812, GPIO12):** MUST use `light: esp32_rmt_led_strip`, **not**
+  `neopixelbus`. The deprecated `neopixelbus` pulls in ESP-IDF's *legacy* RMT
+  driver, which clashes with `remote_receiver`'s *new* RMT driver
+  (`rmt_channel_t` redefined) → hard compile error. Config: `chipset: WS2812`,
+  `rgb_order: GRB`, `use_psram: false`; effects `addressable_rainbow`/`pulse`/`strobe`.
+- **Display (GC9307):** driven via `display: mipi_spi` with `model: CUSTOM`,
+  `dimensions: 296×240`, `transform: {swap_xy: true, mirror_x/y: false}` → MADCTL
+  **0x28** (MV|BGR), `data_rate: 40MHz`, `color_order: BGR`, `invert_colors: false`,
+  and the ILI9341-style `init_sequence` verbatim from Retro-Go
+  `targets/fri3d-2024/config.h` (ESPHome auto-adds SLPOUT/COLMOD/MADCTL/INVOFF/DISPON).
+  The GC9307's native geometry is 296×240 addressed directly — the `ST7789V`
+  mipi_spi model's 240×320 native makes 296-wide fail "invalid offsets", hence CUSTOM.
+  `st7789v` is deprecated/fixed-model-only; `mipi_spi` is the modern path.
+- **Battery (GPIO13):** is **ADC2_CH2** on the S3 (the silkscreen/pinout "ADC1_CH12"
+  is wrong). Divider **2.0**, range **3.15 V = 0 % … 4.15 V = 100 %** (Retro-Go
+  config.h). Implemented as `sensor.adc` (id `batt_raw`) + two `template` sensors.
+  ADC2 reads fine on the S3 with Wi-Fi up (verified: ~3.92 V / ~77 %) — the
+  classic-ESP32 ADC2/Wi-Fi conflict does not apply here.
+- **Quirk:** on this S3's USB-Serial/JTAG, serial log output **stops after Wi-Fi
+  connects** (the full ~205-line boot dump prints, then silence — no steady-state
+  sensor logs reach `/dev/ttyACM0`). Read live values from HA, not serial.
+- **Wi-Fi:** first connection attempt auth-fails against the strongest mesh BSSID
+  then succeeds on retry every boot (~5 s cost, PMF quirk, self-heals).

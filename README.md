@@ -19,6 +19,7 @@ pair-programmer.
 | `BADGE.md` | Comprehensive self-contained reference: identity, connection, full pinout, firmware, backup/restore, how to write apps. **Start here.** |
 | `pinout.md` | Maintained GPIO tables + connectors. |
 | `name_badge_design.md` | The design doc for the name-badge app (spec + on-device findings). |
+| `esphome/` | ESPHome config (`fri3d-badge.yaml`) that flashes the badge as a **Home Assistant** device — display, IMU, buttons, joystick, 5× NeoPixels, battery, buzzer, IR. Secrets are gitignored. |
 | `Pictures/` | Board photos. |
 
 ## The badge
@@ -66,6 +67,43 @@ Copy `app/` onto the badge so the paths are:
 
 Then reset. The badge boots into a neon menu; pick **DAVID** to play. Controls:
 **A** next hobby, **Y** previous, **X** toggle sound, **B**/START back to menu.
+
+## Running it as a Home Assistant device (ESPHome)
+
+`esphome/fri3d-badge.yaml` is a complete ESPHome 2026.6 config that replaces the
+camp firmware and exposes the badge to Home Assistant over Wi-Fi. It is a full
+alternative firmware — flash it the same way as the camp image (it overwrites the
+bootloader, partition table and app).
+
+```bash
+# 1. put your Wi-Fi + API/OTA keys in the gitignored secrets file
+$EDITOR esphome/secrets.yaml      # wifi_ssid, wifi_password, api_key, ota_password
+
+# 2. compile + flash over USB
+esphome compile esphome/fri3d-badge.yaml
+esphome upload  esphome/fri3d-badge.yaml --device /dev/ttyACM0
+```
+
+After it boots and joins Wi-Fi, add it in HA: **Settings → Devices & Services →
+ESPHome → fri3d-badge** (host `fri3d-badge.local`), pasting the `api_key` from
+`secrets.yaml`. You then get these entities:
+
+- **IMU** (Würth WSEN-ISDS = ST LSM6DS3 silicon, I²C 0x6B): acceleration X/Y/Z,
+  gyroscope X/Y/Z, temperature.
+- **Inputs**: 6 buttons (A/B/X/Y/MENU/START) + 2-axis analog joystick.
+- **Output**: the 5× WS2812 string as an addressable light (rainbow/pulse/strobe effects).
+- **Power**: battery voltage + level (GPIO13, ADC2, divider 2.0, 3.15–4.15 V = 0–100 %).
+- Plus buzzer, IR receiver, and the FRITZ!Box device tracker.
+- **Display**: GC9307 driven via `mipi_spi` (MADCTL 0x28, 296×240, 40 MHz) — shows
+  boot text today; see the config for the `lambda` to customize.
+
+Restore the camp firmware any time with the verified backup:
+
+```bash
+esptool --port /dev/ttyACM0 write_flash 0x0 backups/fri3d-badge-2024_full-flash_2026-07-02.bin
+```
+
+See `BADGE.md` §11 for the full hardware/driver notes behind this config.
 
 ## Safety / recovery
 
