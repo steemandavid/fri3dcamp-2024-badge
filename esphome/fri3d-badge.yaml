@@ -55,6 +55,19 @@ ota:
   - platform: esphome
     password: !secret ota_password
 
+# --- HA data for the energy dashboard (HA → badge) --------------------------
+# Pulls live states from Home Assistant into ESPHome so the display lambda can
+# render them. internal:true = used only on-device, not re-exposed as entities.
+time:
+  - platform: homeassistant
+    id: ha_time
+
+text_sensor:
+  - platform: homeassistant
+    entity_id: sensor.skoda_enyaq_laadstatus
+    id: ha_enyaq_status
+    internal: true
+
 # --- I2C (IMU) + SPI (display + SD) ----------------------------------------
 i2c:
   sda: 9
@@ -161,6 +174,32 @@ sensor:
       return pct;
     accuracy_decimals: 0
 
+  # --- Energy dashboard: imported from Home Assistant ---
+  - platform: homeassistant
+    entity_id: sensor.marstek_1_battery_soc
+    id: ha_marstek_1_soc
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.marstek_2_battery_soc
+    id: ha_marstek_2_soc
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.marstek_venus_3_battery_soc
+    id: ha_marstek_3_soc
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.skoda_enyaq_accupercentage
+    id: ha_enyaq_soc
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.skoda_enyaq_actieradius
+    id: ha_enyaq_range
+    internal: true
+  - platform: homeassistant
+    entity_id: sensor.skoda_enyaq_laadvermogen
+    id: ha_enyaq_charge_kw
+    internal: true
+
 # --- Buttons (active-low, internal pull-up) ---------------------------------
 # START=GPIO0 is also BOOT: pressing it during reset enters download mode (intended).
 # Note: this badge's MENU button is electrically flaky — may read intermittently.
@@ -226,7 +265,10 @@ remote_receiver:
 # a plain ST7789 (no GC9307-specific init), so the model's init is compatible.
 font:
   - file: "gfonts://Roboto"
-    id: my_font
+    id: font_title
+    size: 24
+  - file: "gfonts://Roboto"
+    id: font_small
     size: 14
 
 display:
@@ -241,6 +283,7 @@ display:
     dc_pin: 4
     reset_pin: 48
     data_rate: 40MHz
+    update_interval: 5s
     # Ground truth (Retro-Go targets/fri3d-2024/config.h): MADCTL = MV|BGR = 0x28,
     # 296x240, 40 MHz, ILI9341-style init. swap_xy (MV) + BGR, no mirrors.
     transform:
@@ -267,5 +310,37 @@ display:
       - [0xE0, 0xD0, 0x00, 0x05, 0x0E, 0x15, 0x0D, 0x37, 0x43, 0x47, 0x09, 0x15, 0x12, 0x16, 0x19]
       - [0xE1, 0xD0, 0x00, 0x05, 0x0D, 0x0C, 0x06, 0x2D, 0x44, 0x40, 0x0E, 0x1C, 0x18, 0x16, 0x19]
     lambda: |-
-      it.print(4, 4, id(my_font), "Fri3d Badge");
-      it.print(4, 22, id(my_font), "ESPHome v2");
+      static const Color AMBER(255, 193, 7);
+      static const Color GREY(150, 150, 150);
+      static const Color WHITE(255, 255, 255);
+      char buf[56], v1[16], v2[16], v3[16], ves[16], ver[20], vkw[20];
+
+      // format a numeric HA state as fmt, or "--" if not yet received
+      auto val = [](float v, bool ok, char *out, const char *fmt) {
+        if (ok && !isnan(v)) snprintf(out, 16, fmt, v); else snprintf(out, 16, "--");
+      };
+      val(id(ha_marstek_1_soc).state, id(ha_marstek_1_soc).has_state(), v1, "%.0f%%");
+      val(id(ha_marstek_2_soc).state, id(ha_marstek_2_soc).has_state(), v2, "%.0f%%");
+      val(id(ha_marstek_3_soc).state, id(ha_marstek_3_soc).has_state(), v3, "%.0f%%");
+      val(id(ha_enyaq_soc).state,    id(ha_enyaq_soc).has_state(),    ves, "%.0f%%");
+      val(id(ha_enyaq_range).state,  id(ha_enyaq_range).has_state(),  ver, "%.0fkm");
+      val(id(ha_enyaq_charge_kw).state, id(ha_enyaq_charge_kw).has_state(), vkw, "%.1fkW");
+
+      it.print(4, 2, id(font_title), AMBER, "Energie");
+      it.horizontal_line(0, 32, 296, GREY);
+
+      it.print(4, 40, id(font_small), GREY, "Marstek batterijen");
+      snprintf(buf, sizeof(buf), "1 %s   2 %s   3 %s", v1, v2, v3);
+      it.print(4, 58, id(font_small), WHITE, buf);
+
+      it.print(4, 84, id(font_small), GREY, "Skoda Enyaq");
+      snprintf(buf, sizeof(buf), "accu %s   %s", ves, ver);
+      it.print(4, 102, id(font_small), WHITE, buf);
+      snprintf(buf, sizeof(buf), "laden %s   %s", vkw,
+               id(ha_enyaq_status).has_state() ? id(ha_enyaq_status).state.c_str() : "--");
+      it.print(4, 120, id(font_small), WHITE, buf);
+
+      if (id(ha_time).now().is_valid()) {
+        it.strftime(4, 168, id(font_title), WHITE, "%H:%M", id(ha_time).now());
+        it.strftime(4, 206, id(font_small), GREY, "%a %d %b", id(ha_time).now());
+      }

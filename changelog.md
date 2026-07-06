@@ -478,3 +478,103 @@ until I mined the **ground truth** from the running firmware:
 - **Restore camp firmware:** `esptool --port /dev/ttyACM0 write_flash 0x0 backups/fri3d-badge-2024_full-flash_2026-07-02.bin`
 - **Docs updated:** `README.md` (ESPHome how-to + table row), `BADGE.md` §11 (driver notes),
   memory `fri3d-badge-esphome.md` (deep detail).
+
+---
+
+# ESPHome energy dashboard, fri3d-badge-mcp setup, and MicroPythonOS reflash discovery — 2026-07-06
+
+Three threads: (1) finished the ESPHome display lambda into a real energy dashboard pulling
+Home Assistant data back onto the badge, (2) checked whether the new `fri3d-badge-mcp` (built
+for the 2026 badge) is any use here and wired it into Claude Code, (3) discovered — by directly
+probing the badge over serial — that it has since been reflashed to `badge_firmware_MicroPythonOS`,
+which changes the answer to (2).
+
+## 1. ESPHome: energy-dashboard display
+Replaced the placeholder "Fri3d Badge / ESPHome v2" boot text in `esphome/fri3d-badge.yaml`'s
+display `lambda` with a real dashboard, pulling data **from** HA back onto the device (reverse
+direction of the existing sensor entities):
+- Added `time: platform: homeassistant`, plus `sensor`/`text_sensor` entries
+  (`platform: homeassistant`, `internal: true` — so they don't show up as new HA entities) for
+  Marstek battery 1/2/3 SoC, Skoda Enyaq accu %, range, charge kW, and charge status.
+- Two fonts now (`font_title` 24px, `font_small` 14px, was a single `my_font`), `update_interval: 5s`.
+- Lambda renders: "Energie" header, Marstek 1/2/3 SoC row, Enyaq accu%+range row, Enyaq
+  charge-kW + status row, and HH:MM + weekday/date from `ha_time` at the bottom.
+- Updated `README.md`'s ESPHome entity list to describe the dashboard instead of "shows boot text".
+
+## 2. fri3d-badge-mcp — checked compatibility, added to Claude Code
+User found <https://fri3dcamp.github.io/badge_2026/mcp/> and asked whether it helps with the 2024
+badge, and to update the blog post if so.
+- Investigated `fri3d-badge-mcp` (source [DrSkunk/fri3d-badge-mcp](https://github.com/DrSkunk/fri3d-badge-mcp),
+  hosted `https://fri3d-badge-mcp.vercel.app/mcp`): 8 tools over 3 doc sources — generic
+  MicroPython docs, **badge docs hardcoded to `badge_2026`** (confirmed via its `mkdocs.yml` nav:
+  `badge/`, `communicator/`, `dj/`, `tof/`, `lora/`, `mirror/` — no 2024 content), and MicroPythonOS
+  docs (`docs.micropythonos.com`, generic to the OS, not badge-hardware-specific).
+- Added a short "Update (2026-07-06)" section to the companion blog post
+  (`programming-the-fri3d-badge-with-claude-code.md` in the `website-steeman.be` repo) explaining
+  this — badge-doc tools don't help the 2024 badge, generic MicroPython tools do.
+- **Added the server to Claude Code at user scope** so it's available in every project on this
+  machine going forward:
+  ```bash
+  claude mcp add --transport http --scope user fri3d-badge https://fri3d-badge-mcp.vercel.app/mcp
+  ```
+  Confirmed `✔ Connected` via `claude mcp list`. New MCP tools only load into a session's tool
+  list on restart — mid-session you have to call the HTTP endpoint's JSON-RPC API directly (see
+  §3) to test it before restarting.
+
+## 3. Discovered the badge now runs MicroPythonOS
+User mentioned they'd flashed the "most recent firmware" — probed `/dev/ttyACM0` to check what
+that actually was, since none of this repo's documented firmwares (camp Retro-Go/MicroPython,
+NeonLauncher, ESPHome) matched "most recent":
+```
+>>> import sys; print(sys.version)
+3.4.0; MicroPython 78ff170de9-dirty on 2026-07-02
+>>> import os; print(os.uname())
+(sysname='esp32', ..., release='1.27.0', ...)
+>>> import os; print(os.listdir("/"))
+['builtin', 'apps', 'data', 'prefs', 'retro-go', 'romart', 'roms']
+>>> import mpos; print(mpos)
+<module 'mpos' from 'mpos/__init__.py'>
+```
+`/apps` is full of `com.micropythonos.*` packages (breakout, confetti, connect4, imu, lora_chat,
+musicplayer, retrocore_launcher, showbattery, ...) plus `com.quasikili.*`. This is
+[`Fri3dCamp/badge_firmware_MicroPythonOS`](https://github.com/Fri3dCamp/badge_firmware_MicroPythonOS)
+— "the main firmware for the Fri3d Camp 2024 and 2026 badges" — a completely different filesystem
+layout and app framework (Android-inspired `AppManager`/`Intents`/`Service`+`Activity` lifecycle)
+from the old `fri3d`/`user` layout. **This replaces the NeonLauncher name-badge app and predates
+any need to reflash back to ESPHome** — the badge is not currently running either.
+
+**Re-tested the MCP against this new reality** by calling the hosted endpoint directly (session
+hadn't restarted yet):
+```bash
+python3 -c "
+import urllib.request, json
+req = urllib.request.Request('https://fri3d-badge-mcp.vercel.app/mcp',
+    data=json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/call',
+    'params':{'name':'search_micropythonos_docs','arguments':{'query':'app lifecycle AppInfo'}}}).encode(),
+    headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'})
+print(urllib.request.urlopen(req).read().decode())
+"
+```
+Returned exactly the right framework docs (`AppManager`, `Intents`, `App Lifecycle`, `Service`
+base class) matching what's actually installed. **Conclusion: the MCP's MicroPythonOS-doc tools
+are now genuinely useful for this badge** (unlike the badge-hardware-doc tools, still 2026-only).
+No session/handshake needed — the hosted endpoint answers `tools/list`/`tools/call` statelessly.
+
+## Artifacts / memory
+- `esphome/fri3d-badge.yaml`, `README.md` — energy dashboard (committed, not yet re-flashed to
+  the badge since it's currently on MicroPythonOS).
+- `website-steeman.be` repo: MCP addendum to the blog post, plus **9 separate commits** clearing
+  out a large backlog of unrelated pending work in that repo (new posts, date-typo fixes, deploy
+  tooling, utility scripts, a prompts log) — split by logical unit rather than one giant commit;
+  excluded pure file-mode noise (`old-site/**`, a `-dirty` submodule pointer) per that repo's own
+  "don't `git add .`" convention.
+- New memory: `fri3d-badge-mcp.md` (indexed in `MEMORY.md`) — MCP setup + scope of what it covers
+  + confirmed MicroPythonOS reflash.
+
+## Notes / gotchas
+- **MCP tools need a Claude Code session restart** after `claude mcp add` before they appear in
+  `ToolSearch`/are callable normally — test via direct HTTP JSON-RPC calls in the meantime if you
+  need to verify before restarting.
+- **Badge state has moved on from every other section in this changelog**: it's on
+  `badge_firmware_MicroPythonOS` now, not ESPHome and not the NeonLauncher. Porting the name-badge
+  app or the ESPHome config to the `mpos` app framework would be new work, not a revert.

@@ -94,8 +94,11 @@ ESPHome → fri3d-badge** (host `fri3d-badge.local`), pasting the `api_key` from
 - **Output**: the 5× WS2812 string as an addressable light (rainbow/pulse/strobe effects).
 - **Power**: battery voltage + level (GPIO13, ADC2, divider 2.0, 3.15–4.15 V = 0–100 %).
 - Plus buzzer, IR receiver, and the FRITZ!Box device tracker.
-- **Display**: GC9307 driven via `mipi_spi` (MADCTL 0x28, 296×240, 40 MHz) — shows
-  boot text today; see the config for the `lambda` to customize.
+- **Display**: GC9307 driven via `mipi_spi` (MADCTL 0x28, 296×240, 40 MHz). The
+  `lambda` renders an energy-dashboard screen — Marstek battery SoCs, Skoda Enyaq
+  charge/range/status and the time — pulled *from* HA via `sensor`/`text_sensor`/
+  `time: platform: homeassistant` entries (`internal: true`, so they don't show up
+  as new HA entities). Edit the `lambda` in the config to customize.
 
 Restore the camp firmware any time with the verified backup:
 
