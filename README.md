@@ -20,6 +20,7 @@ pair-programmer.
 | `pinout.md` | Maintained GPIO tables + connectors. |
 | `name_badge_design.md` | The design doc for the name-badge app (spec + on-device findings). |
 | `esphome/` | ESPHome config (`fri3d-badge.yaml`) that flashes the badge as a **Home Assistant** device — display, IMU, buttons, joystick, 5× NeoPixels, battery, buzzer, IR. Secrets are gitignored. |
+| `group-nametag/` | **Planned, not yet built.** A generic nametag + BLE proximity-finder app: any hackerspace can set its own group name, member name, and logo (all file-based config, no code edits) and get alerted when a fellow group member's badge is nearby. See `group-nametag/PLAN.md` for the full design. |
 | `Pictures/` | Board photos. |
 
 ## The badge

@@ -578,3 +578,112 @@ No session/handshake needed — the hosted endpoint answers `tools/list`/`tools/
 - **Badge state has moved on from every other section in this changelog**: it's on
   `badge_firmware_MicroPythonOS` now, not ESPHome and not the NeonLauncher. Porting the name-badge
   app or the ESPHome config to the `mpos` app framework would be new work, not a revert.
+
+# Planned a generic BLE nametag + group-proximity-finder app — 2026-07-07
+
+Pure planning session, no code written. User wants a new badge app: an animated nametag
+(group logo + wearer's name) that also alerts the wearer via BLE when a fellow member of
+their own group/hackerspace is nearby. Interviewed the user extensively (via `AskUserQuestion`)
+before designing anything, then iterated the plan through two full rounds of `EnterPlanMode`
+based on follow-up feedback, and wrote the final result to a new project subfolder rather than
+implementing it — ready to hand off to another session/LLM to build.
+
+## 1. Interview — scoped the ambiguous decisions
+Asked, and got answers on:
+- **Detection scope: foreground-only.** BLE proximity only runs while this app is the active
+  screen (simpler than making it the persistent home app; matches how `mpos`/the old `fri3d`
+  framework both run one app at a time anyway).
+- **Rollout: multiple members/groups will flash this**, not just David's own badge — so
+  provisioning must be pure file edits, no code changes per install.
+- **Name/group config: edit a file over USB before wearing it** (same workflow as the existing
+  `name_badge` app's `app.json`), not an on-device text-entry UI.
+- **Range: ~20 m** ("who's in the building" vicinity, explicitly accepted as an approximate,
+  field-tunable RSSI threshold, not a precise handshake-distance figure).
+- **Notification identifies the person by name** (banner + LED flash + buzzer chime, once per
+  encounter, re-arms after they leave range), and their name stays listed discreetly on screen
+  for as long as they remain in range.
+- **Visual style: logo-forward**, distinct from the existing neon-arcade `name_badge` app.
+- Then, on a second pass, the user asked to **generalize** the whole thing: not
+  Makerspace-Baasrode-specific, but a redistributable app for *any* hackerspace — configurable
+  group name (not hardcoded), configurable logo via a dropped-in file (not just member name/
+  handle), and a **new dedicated project folder** rather than living inside the existing `app/`
+  tree.
+
+## 2. Hardware/firmware research (read directly from the cloned source, not assumed)
+Confirmed two load-bearing capabilities by reading actual build config in
+`repos/badge_2024_micropython` (this project's local clone):
+- **BLE central+peripheral is compiled in.**
+  `ports/esp32/boards/FRI3D_BADGE_2024/mpconfigboard.cmake` includes `boards/sdkconfig.ble`,
+  which sets `CONFIG_BT_ENABLED=y` / `CONFIG_BT_NIMBLE_ENABLED=y` /
+  `CONFIG_BT_CONTROLLER_ENABLED=y`; `mpconfigport.h` sets `MICROPY_PY_BLUETOOTH (1)` and
+  `MICROPY_PY_BLUETOOTH_ENABLE_CENTRAL_MODE (1)` — i.e. the standard `bluetooth.BLE()` module
+  can advertise *and* scan at the same time. No `fri3d` package wrapper exists for it.
+- **lvgl has PNG/JPEG/GIF decoders compiled in** (`LV_USE_TJPGD 1`, `LV_USE_LODEPNG 1`,
+  `LV_USE_GIF 1` in `fri3d/lvgl_esp32_mpy/binding/lv_conf.h`) — meaning a group's logo could
+  plausibly be decoded straight from a raw file buffer on-device, no host-side conversion tool
+  needed. **But** lvgl's filesystem layer is *not* enabled for any real FS (`LV_USE_FS_STDIO/
+  POSIX/FATFS/LITTLEFS` all `0`, only `LV_USE_FS_MEMFS 1`), so this has to go through an
+  in-memory `lv.image_dsc_t` buffer, not an `lv_fs` path — and that exact call pattern is
+  **unverified** on this MicroPython binding, flagged as the first thing to spike before
+  building the rest of the UI. Fallback: pre-convert the logo to raw RGB565 on a host machine
+  (Pillow), reusing the already-verified raw-buffer technique from `app/name_badge/art.py`'s
+  `fb_image()`.
+- Read `fri3d.application`'s actual framework source
+  (`repos/badge_2024_micropython/fri3d/fri3d_application/src/payload/fri3d/application/`) to
+  confirm the per-app config mechanism: `app.json`'s `"config"` dict is exposed verbatim as
+  `App.config` — decided to reuse this directly rather than inventing a parallel config format.
+
+## 3. Design decisions baked into the plan
+- **Generic BLE protocol**, not Makerspace-specific: a fixed 4-byte app magic (`b"HSNT"`)
+  identifies any badge running this app; a **16-bit FNV-1a hash of the group name** (computed
+  locally on each badge from its own config, normalized/lowercased) replaces transmitting the
+  group name itself — badges only alert on matching group hashes, silently ignoring every other
+  group's badges. Named this the "find your own people" filter.
+- Manufacturer-specific AD structure (type `0xFF`) budget worked out byte-by-byte: ~17 bytes
+  left for the name/handle after magic + group hash + headers, within the 31-byte legacy
+  advertising limit — no scan-response needed at this scale.
+- RSSI-based range with hysteresis (separate enter/exit thresholds) + a last-seen timeout for
+  eviction, and a `notified` flag per address so alerts fire once per encounter and re-arm on
+  re-entry.
+- New project folder `group-nametag/` (inside `fri3dbadge2024/`, not merged into the existing
+  `app/` tree), mirroring the main project's own `app/`+`tools/` convention:
+  `group-nametag/app/group_nametag/{app.json,__init__.py,group_nametag.py,ble_proximity.py,
+  logo.png}` + `group-nametag/tools/convert_logo.py` (fallback converter) +
+  `group-nametag/README.md` + `group-nametag/DESIGN.md` (both still to be written).
+
+## Artifacts
+- **`group-nametag/PLAN.md`** (new) — the full, self-contained implementation plan: hardware
+  facts, framework conventions to reuse (with file:line-equivalent references into
+  `app/name_badge/`, `app/neon_launcher/`, and the cloned framework source), file layout, the
+  complete BLE protocol spec (byte table + FNV-1a hash + Python snippet), config schema, logo
+  primary/fallback handling, UI/animation/button/lifecycle spec, a two-item build-order "spike
+  first" list, an 8-item verification checklist, and an explicit out-of-scope list. Written to
+  be handed to a fresh LLM/developer with no conversation context.
+- `README.md` — added a `group-nametag/` row to the "What's in here" table pointing at
+  `PLAN.md`, marked **planned, not yet built**.
+- No code was written; no changes to `app/`, `tools/`, or any existing app.
+
+## Notes / gotchas / follow-ups
+- **⚠ Unresolved conflict with the 2026-07-06 entry above**: this whole plan was designed
+  against the `fri3d.application` framework (`App`/`AppManager`/`neon_launcher`/`name_badge`
+  conventions) as checked into this repo's `app/` tree and the cloned
+  `repos/badge_2024_micropython` source — because that's what's on disk here. **But the previous
+  session's changelog entry ("Discovered the badge now runs MicroPythonOS") found the physical
+  badge itself had already been reflashed to `badge_firmware_MicroPythonOS`**, a completely
+  different Android-inspired app framework (`AppManager`/`Intents`/`Service`+`Activity`,
+  `/apps/com.*` packages, `/builtin`+`/apps`+`/data`+`/prefs` filesystem layout) — and that
+  wasn't re-checked during this session. **Before implementing `group-nametag/PLAN.md`,
+  whoever picks it up must first verify which framework the badge is actually running** and, if
+  it's still on MicroPythonOS, adapt the app-lifecycle/config sections of the plan (§3, §4, §8)
+  to `mpos`'s `AppManager`/`Intents`/`Service`+`Activity` model instead of `fri3d.application`'s
+  `App.start()`/`stop()`. The BLE protocol design (§6) and the on-device image-decoder findings
+  (§2, lvgl's compiled-in `LV_USE_TJPGD`/`LV_USE_LODEPNG`) should still hold either way since
+  those are firmware-build-level facts, not app-framework-level ones — but this needs
+  confirming against whatever firmware image MicroPythonOS actually ships, not assumed.
+- Two spikes are explicitly called out as build-order-blocking in `PLAN.md`: (1) on-device
+  PNG/JPEG decode from an in-memory buffer, (2) concurrent BLE advertise+scan on this exact
+  NimBLE build — both architecturally plausible from the compiled config but not yet exercised
+  on real hardware.
+- `group-nametag/README.md` and `group-nametag/DESIGN.md` are referenced by `PLAN.md` but not
+  yet written — `PLAN.md` currently carries all the detail; splitting it out into those two docs
+  is follow-up work for whoever implements this.
